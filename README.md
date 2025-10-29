@@ -238,9 +238,11 @@ This is an academic project. For improvements:
 
 This project is for educational purposes.
 
-## 👥 Author
+## 👥 Authors
 
-Developed as part of a Big Data Engineering course project.
+Bijilesh
+Visweswar 
+Sanjay
 
 ## 🙏 Acknowledgments
 
