@@ -1,4 +1,4 @@
-#E-commerce Churn Prediction
+# End-to-End Big Data Pipeline: E-commerce Churn Prediction
 
 A complete big data pipeline using Hadoop, Spark, Hive, and MLlib for predicting customer churn in e-commerce.
 
@@ -20,6 +20,11 @@ CSV Data → HDFS (Bronze) → Spark Processing (Silver) → Feature Engineering
 - **Analysis**: Jupyter Notebooks, PySpark
 
 ## 📊 Data Pipeline Layers
+
+### Dataset
+📥 **Download the dataset**: [E-commerce Events Dataset (2019-Oct.csv)](https://drive.google.com/file/d/1xOBEgbzniWURA-ijKmULCDPrjoPA5AEQ/view?usp=sharing)
+
+> Note: The dataset is too large to include in the repository. Download it and place it in the `data/` folder before running the pipeline.
 
 ### Bronze Layer (Raw Data)
 - **Source**: E-commerce event data (2019-Oct.csv)
