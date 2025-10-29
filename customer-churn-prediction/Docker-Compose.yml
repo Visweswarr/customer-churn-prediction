@@ -1,0 +1,195 @@
+version: "3.9" # Note: Version tag is optional in newer Docker Compose versions
+
+services:
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: namenode
+    restart: always
+    ports:
+      - "9870:9870"   # HDFS NameNode UI
+      - "9000:9000"   # HDFS RPC
+    volumes:
+      - hadoop_namenode:/hadoop/dfs/name
+      - ./data:/data  # Mount local ./data folder to /data inside container
+    environment:
+      - CLUSTER_NAME=hdfscluster
+    env_file:
+      - ./hadoop.env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9870"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode
+    restart: always
+    volumes:
+      - hadoop_datanode:/hadoop/dfs/data
+      - ./data:/data # Mount local ./data folder here too
+    env_file:
+      - ./hadoop.env
+    environment:
+      - CLUSTER_NAME=hdfscluster
+      - SERVICE_PRECONDITION=namenode:9870
+    depends_on:
+      - namenode
+
+  resourcemanager:
+    image: bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java8
+    container_name: resourcemanager
+    restart: always
+    ports:
+      - "8088:8088"   # YARN RM UI
+    env_file:
+      - ./hadoop.env
+    environment:
+      - SERVICE_PRECONDITION=namenode:9000 namenode:9870 datanode:9864
+    depends_on:
+      - namenode
+      - datanode
+
+  nodemanager:
+    image: bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java8
+    container_name: nodemanager
+    restart: always
+    ports:
+      - "8042:8042"   # YARN NodeManager UI
+    env_file:
+      - ./hadoop.env
+    environment:
+      - SERVICE_PRECONDITION=namenode:9000 namenode:9870 datanode:9864 resourcemanager:8088
+    depends_on:
+      - resourcemanager
+
+  historyserver:
+    image: bde2020/hadoop-historyserver:2.0.0-hadoop3.2.1-java8
+    container_name: historyserver
+    restart: always
+    ports:
+      - "8188:8188"   # MR history UI
+    env_file:
+      - ./hadoop.env
+    environment:
+      - SERVICE_PRECONDITION=namenode:9000 namenode:9870 datanode:9864 resourcemanager:8088
+    volumes:
+      - hadoop_historyserver:/hadoop/yarn/timeline
+    depends_on:
+      - resourcemanager
+
+  hive-metastore-postgresql:
+    image: bde2020/hive-metastore-postgresql:2.3.0
+    container_name: hive-metastore-postgresql
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: hive
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  hive-metastore:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-metastore
+    restart: always
+    command: /opt/hive/bin/hive --service metastore
+    ports:
+      - "9083:9083"   # Hive Metastore Thrift
+    env_file:
+      - ./hadoop.env
+    environment:
+      - SERVICE_PRECONDITION=namenode:9000 datanode:9864 hive-metastore-postgresql:5432
+    volumes:
+      - ./hive-site.xml:/opt/hive/conf/hive-site.xml
+    depends_on:
+      - hive-metastore-postgresql
+      - namenode
+      - datanode
+
+  hive-server:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-server
+    restart: always
+    ports:
+      - "10000:10000" # HiveServer2
+    env_file:
+      - ./hadoop.env
+    environment:
+      - HIVE_CORE_CONF_javax_jdo_option_ConnectionURL=jdbc:postgresql://hive-metastore-postgresql:5432/metastore
+      - SERVICE_PRECONDITION=hive-metastore:9083
+    volumes:
+      - ./hive-site.xml:/opt/hive/conf/hive-site.xml
+    depends_on:
+      - hive-metastore
+
+  spark-master:
+    # ** CHANGED: Use build instead of image **
+    # image: bde2020/spark-master:3.0.0-hadoop3.2
+    build:
+      context: . # Build from the current directory
+      dockerfile: Dockerfile # Use the Dockerfile in the current directory
+    container_name: spark-master
+    restart: always
+    ports:
+      - "8080:8080"   # Spark master UI
+      - "7077:7077"   # Spark master
+      - "4040:4040"   # Spark Application UI port
+    environment:
+      - INIT_DAEMON_STEP=setup_spark
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    volumes:
+      # Keep data mount for easy access to CSV if needed outside Spark jobs
+      - ./data:/data
+      # You can optionally remove the src mount if the Dockerfile copies it
+      # - ./src:/app
+    depends_on:
+      - namenode
+      - datanode
+      - hive-metastore
+
+  spark-worker-1:
+    # ** CHANGED: Use build instead of image **
+    # image: bde2020/spark-worker:3.0.0-hadoop3.2
+    build:
+      context: . # Build from the current directory
+      dockerfile: Dockerfile # Use the Dockerfile in the current directory
+    container_name: spark-worker-1
+    restart: always
+    ports:
+      - "8081:8081"   # Spark worker UI
+    environment:
+      - SPARK_MASTER=spark://spark-master:7077
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+      - SPARK_WORKER_MEMORY=8g # Adjust based on your machine's RAM
+      - SPARK_WORKER_CORES=4   # Adjust based on your machine's CPU
+    volumes:
+      # Keep data mount
+      - ./data:/data
+      # You can optionally remove the src mount if the Dockerfile copies it
+      # - ./src:/app
+    depends_on:
+      - spark-master
+
+  jupyter:
+    image: jupyter/pyspark-notebook:latest # This image should already have numpy
+    container_name: jupyter
+    restart: always
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./notebooks:/home/jovyan/work # Mount local notebooks folder
+      - ./data:/home/jovyan/data     # Make data accessible in Jupyter too
+      - ./src:/home/jovyan/app       # Make scripts accessible in Jupyter
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      # Add Spark config for Jupyter to connect to Hive
+      - SPARK_OPTS=--conf spark.sql.warehouse.dir=hdfs://namenode:9000/user/hive/warehouse --conf hive.metastore.uris=thrift://hive-metastore:9083
+    depends_on:
+      - spark-master
+
+volumes:
+  hadoop_namenode:
+  hadoop_datanode:
+  hadoop_historyserver:
